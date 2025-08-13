@@ -24,6 +24,10 @@
 (define-map user-reveals principal {value: uint, nonce: uint})
 (define-map user-tokens principal uint)
 (define-map token-approvals {token-id: uint, spender: principal} bool)
+(define-map user-referrals principal principal)
+(define-map referral-counts principal uint)
+(define-map reward-balances principal uint)
+(define-map referral-rewards principal uint)
 
 (define-read-only (get-last-token-id)
   (- (var-get token-id-nonce) u1)
@@ -101,6 +105,21 @@
   )
 )
 
+(define-public (commit-with-referral (commitment (buff 32)) (referrer principal))
+  (let ((current-phase (get-current-phase)))
+    (begin
+      (asserts! (is-eq current-phase "commit") ERR-INVALID-PHASE)
+      (asserts! (is-none (map-get? user-commits tx-sender)) ERR-ALREADY-COMMITTED)
+      (asserts! (not (is-eq tx-sender referrer)) ERR-UNAUTHORIZED)
+      (map-set user-commits tx-sender commitment)
+      (map-set user-referrals tx-sender referrer)
+      (map-set referral-counts referrer (+ (default-to u0 (map-get? referral-counts referrer)) u1))
+      (map-set reward-balances referrer (+ (default-to u0 (map-get? reward-balances referrer)) u100))
+      (ok true)
+    )
+  )
+)
+
 (define-public (reveal (value uint) (nonce uint))
   (let (
     (current-phase (get-current-phase))
@@ -125,6 +144,7 @@
     (current-phase (get-current-phase))
     (reveal-data (map-get? user-reveals tx-sender))
     (token-id (var-get token-id-nonce))
+    (referrer (map-get? user-referrals tx-sender))
   )
     (begin
       (asserts! (is-eq current-phase "mint") ERR-INVALID-PHASE)
@@ -133,6 +153,7 @@
       (map-set nft-owners token-id tx-sender)
       (map-set user-tokens tx-sender token-id)
       (map-set nft-metadata token-id (generate-metadata (get value (unwrap-panic reveal-data))))
+      (process-referral-reward referrer)
       (var-set token-id-nonce (+ token-id u1))
       (ok token-id)
     )
@@ -211,6 +232,69 @@
 
 (define-read-only (get-balance (owner principal))
   (if (is-some (map-get? user-tokens owner)) u1 u0)
+)
+
+(define-read-only (get-referral-info (user principal))
+  {
+    referrer: (map-get? user-referrals user),
+    referral-count: (default-to u0 (map-get? referral-counts user)),
+    reward-balance: (default-to u0 (map-get? reward-balances user)),
+    total-rewards-earned: (default-to u0 (map-get? referral-rewards user))
+  }
+)
+
+(define-read-only (get-reward-balance (user principal))
+  (default-to u0 (map-get? reward-balances user))
+)
+
+(define-public (claim-referral-bonus)
+  (let (
+    (current-phase (get-current-phase))
+    (user-reveal (map-get? user-reveals tx-sender))
+    (referrer (map-get? user-referrals tx-sender))
+    (bonus-amount u50)
+  )
+    (begin
+      (asserts! (is-eq current-phase "mint") ERR-INVALID-PHASE)
+      (asserts! (is-some user-reveal) ERR-NOT-COMMITTED)
+      (asserts! (is-some referrer) ERR-NOT-FOUND)
+      (map-set reward-balances tx-sender (+ (default-to u0 (map-get? reward-balances tx-sender)) bonus-amount))
+      (map-set referral-rewards tx-sender (+ (default-to u0 (map-get? referral-rewards tx-sender)) bonus-amount))
+      (ok bonus-amount)
+    )
+  )
+)
+
+(define-public (spend-rewards (amount uint))
+  (let ((current-balance (default-to u0 (map-get? reward-balances tx-sender))))
+    (begin
+      (asserts! (>= current-balance amount) ERR-UNAUTHORIZED)
+      (map-set reward-balances tx-sender (- current-balance amount))
+      (ok true)
+    )
+  )
+)
+
+(define-public (transfer-rewards (recipient principal) (amount uint))
+  (let ((current-balance (default-to u0 (map-get? reward-balances tx-sender))))
+    (begin
+      (asserts! (>= current-balance amount) ERR-UNAUTHORIZED)
+      (map-set reward-balances tx-sender (- current-balance amount))
+      (map-set reward-balances recipient (+ (default-to u0 (map-get? reward-balances recipient)) amount))
+      (ok true)
+    )
+  )
+)
+
+(define-private (process-referral-reward (referrer-opt (optional principal)))
+  (match referrer-opt
+    referrer (begin
+      (map-set reward-balances referrer (+ (default-to u0 (map-get? reward-balances referrer)) u25))
+      (map-set referral-rewards referrer (+ (default-to u0 (map-get? referral-rewards referrer)) u25))
+      true
+    )
+    false
+  )
 )
 
 (define-read-only (get-contract-info)

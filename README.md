@@ -9,6 +9,7 @@ A Clarity smart contract implementing a commit-reveal scheme for fair NFT distri
 - 📅 **Time-Based Phases**: Structured commit, reveal, and mint phases
 - 🛡️ **Secure Randomness**: Uses SHA256 hashing for commitment verification
 - 🎯 **Rarity System**: 5 tiers of NFT rarity (Common, Rare, Epic, Legendary, Mythic)
+- 🤝 **Referral & Rewards**: Viral growth mechanics with token rewards for bringing new users
 
 ## 🔄 How It Works
 
@@ -31,9 +32,11 @@ Users mint their NFT with metadata determined by their revealed value.
 
 ### Commit Phase
 ```bash
-# Generate commitment hash: sha256(value + nonce)
-# Example: sha256("42" + "secret123")
+# Standard commit
 (contract-call? .nft-reveal-mechanism commit 0x...)
+
+# Commit with referral (earn rewards for referrer)
+(contract-call? .nft-reveal-mechanism commit-with-referral 0x... 'ST1REFERRER...)
 ```
 
 ### Reveal Phase
@@ -48,13 +51,41 @@ Users mint their NFT with metadata determined by their revealed value.
 (contract-call? .nft-reveal-mechanism mint-nft)
 ```
 
+## 🤝 Referral System
+
+### Earn Rewards by Referring
+```bash
+# When new users commit with your address as referrer, you earn 100 reward tokens
+# They can commit using:
+(contract-call? .nft-reveal-mechanism commit-with-referral 0x... tx-sender)
+```
+
+### Claim & Use Rewards
+```bash
+# Referred users can claim 50 bonus tokens during mint phase
+(contract-call? .nft-reveal-mechanism claim-referral-bonus)
+
+# Check reward balance
+(contract-call? .nft-reveal-mechanism get-reward-balance tx-sender)
+
+# Spend rewards (implementation-specific usage)
+(contract-call? .nft-reveal-mechanism spend-rewards u25)
+
+# Transfer rewards to another user
+(contract-call? .nft-reveal-mechanism transfer-rewards 'ST1RECIPIENT... u50)
+```
+
 ## 📊 Contract Functions
 
 ### Public Functions
 - `initialize-phases` - Set up commit/reveal/mint durations
 - `commit` - Submit commitment hash
+- `commit-with-referral` - Submit commitment with referrer for rewards
 - `reveal` - Reveal value and nonce
 - `mint-nft` - Mint NFT after successful reveal
+- `claim-referral-bonus` - Claim bonus rewards for being referred
+- `spend-rewards` - Spend accumulated reward tokens
+- `transfer-rewards` - Transfer rewards to another user
 - `transfer` - Transfer NFT ownership
 - `approve` - Approve spender for token
 - `transfer-from` - Transfer from approved address
@@ -66,6 +97,8 @@ Users mint their NFT with metadata determined by their revealed value.
 - `get-user-token` - Get user's minted token ID
 - `get-token-metadata` - Get NFT metadata
 - `get-phase-info` - Get all phase timing info
+- `get-referral-info` - Get user's referral statistics and rewards
+- `get-reward-balance` - Check user's reward token balance
 
 ## 🎮 Testing
 
@@ -81,11 +114,12 @@ clarinet console
 ### Example Test Flow
 1. Deploy contract
 2. Initialize phases with test durations
-3. Commit with hash
+3. Commit with referral to earn rewards
 4. Advance to reveal phase
 5. Reveal with matching value/nonce
 6. Advance to mint phase
 7. Mint NFT and verify metadata
+8. Claim referral bonuses and transfer rewards
 
 ## 🏗️ Project Structure
 
@@ -122,6 +156,8 @@ Edit `Clarinet.toml` to configure:
 - ✅ Commitment verification
 - ✅ Duplicate prevention
 - ✅ Authorization checks
+- ✅ Self-referral prevention
+- ✅ Reward balance validation
 
 ## 📈 Error Codes
 
