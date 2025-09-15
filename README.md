@@ -10,6 +10,7 @@ A Clarity smart contract implementing a commit-reveal scheme for fair NFT distri
 - 🛡️ **Secure Randomness**: Uses SHA256 hashing for commitment verification
 - 🎯 **Rarity System**: 5 tiers of NFT rarity (Common, Rare, Epic, Legendary, Mythic)
 - 🤝 **Referral & Rewards**: Viral growth mechanics with token rewards for bringing new users
+- 🏦 **Staking & Yield Farming**: Time-locked staking pools with yield generation for reward tokens
 
 ## 🔄 How It Works
 
@@ -75,6 +76,38 @@ Users mint their NFT with metadata determined by their revealed value.
 (contract-call? .nft-reveal-mechanism transfer-rewards 'ST1RECIPIENT... u50)
 ```
 
+## 🏦 Staking & Yield Farming
+
+### Create Staking Pools (Owner Only)
+```bash
+# Create a staking pool: name, yield-rate (basis points), min-stake, lock-period (blocks)
+(contract-call? .nft-reveal-mechanism create-staking-pool "High Yield" u500 u100 u1000)
+```
+
+### Stake & Earn Yields
+```bash
+# Stake tokens in a pool
+(contract-call? .nft-reveal-mechanism stake-tokens u1 u500)
+
+# Check staking info and current yields
+(contract-call? .nft-reveal-mechanism get-stake-info tx-sender)
+
+# Unstake after lock period (receive principal + yields)
+(contract-call? .nft-reveal-mechanism unstake-tokens)
+
+# Emergency unstake (10% penalty)
+(contract-call? .nft-reveal-mechanism emergency-unstake)
+```
+
+### Pool Analytics
+```bash
+# Get pool information
+(contract-call? .nft-reveal-mechanism get-pool-info u1)
+
+# Get overall staking overview
+(contract-call? .nft-reveal-mechanism get-staking-overview)
+```
+
 ## 📊 Contract Functions
 
 ### Public Functions
@@ -86,6 +119,10 @@ Users mint their NFT with metadata determined by their revealed value.
 - `claim-referral-bonus` - Claim bonus rewards for being referred
 - `spend-rewards` - Spend accumulated reward tokens
 - `transfer-rewards` - Transfer rewards to another user
+- `create-staking-pool` - Create new staking pool with yield parameters
+- `stake-tokens` - Stake reward tokens in a pool for yields
+- `unstake-tokens` - Unstake after lock period with earned yields
+- `emergency-unstake` - Early unstake with 10% penalty
 - `transfer` - Transfer NFT ownership
 - `approve` - Approve spender for token
 - `transfer-from` - Transfer from approved address
@@ -99,6 +136,9 @@ Users mint their NFT with metadata determined by their revealed value.
 - `get-phase-info` - Get all phase timing info
 - `get-referral-info` - Get user's referral statistics and rewards
 - `get-reward-balance` - Check user's reward token balance
+- `get-stake-info` - Get user's staking details and current yields
+- `get-pool-info` - Get staking pool details and statistics
+- `get-staking-overview` - Get global staking statistics
 
 ## 🎮 Testing
 
@@ -120,6 +160,7 @@ clarinet console
 6. Advance to mint phase
 7. Mint NFT and verify metadata
 8. Claim referral bonuses and transfer rewards
+9. Create staking pools and stake tokens for yields
 
 ## 🏗️ Project Structure
 
@@ -158,6 +199,9 @@ Edit `Clarinet.toml` to configure:
 - ✅ Authorization checks
 - ✅ Self-referral prevention
 - ✅ Reward balance validation
+- ✅ Staking pool management
+- ✅ Time-lock enforcement
+- ✅ Emergency unstake penalties
 
 ## 📈 Error Codes
 

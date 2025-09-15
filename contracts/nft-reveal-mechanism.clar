@@ -28,6 +28,12 @@
 (define-map referral-counts principal uint)
 (define-map reward-balances principal uint)
 (define-map referral-rewards principal uint)
+(define-map user-stakes principal {amount: uint, start-height: uint, pool-id: uint})
+(define-map staking-pools uint {name: (string-ascii 32), yield-rate: uint, min-stake: uint, lock-period: uint})
+(define-map pool-stats uint {total-staked: uint, total-stakers: uint})
+
+(define-data-var next-pool-id uint u1)
+(define-data-var total-staked-global uint u0)
 
 (define-read-only (get-last-token-id)
   (- (var-get token-id-nonce) u1)
@@ -295,6 +301,138 @@
     )
     false
   )
+)
+
+(define-public (create-staking-pool (name (string-ascii 32)) (yield-rate uint) (min-stake uint) (lock-period uint))
+  (let ((pool-id (var-get next-pool-id)))
+    (begin
+      (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+      (map-set staking-pools pool-id {name: name, yield-rate: yield-rate, min-stake: min-stake, lock-period: lock-period})
+      (map-set pool-stats pool-id {total-staked: u0, total-stakers: u0})
+      (var-set next-pool-id (+ pool-id u1))
+      (ok pool-id)
+    )
+  )
+)
+
+(define-public (stake-tokens (pool-id uint) (amount uint))
+  (let (
+    (pool (unwrap! (map-get? staking-pools pool-id) ERR-NOT-FOUND))
+    (current-balance (default-to u0 (map-get? reward-balances tx-sender)))
+    (existing-stake (map-get? user-stakes tx-sender))
+    (pool-stat (unwrap! (map-get? pool-stats pool-id) ERR-NOT-FOUND))
+  )
+    (begin
+      (asserts! (is-none existing-stake) ERR-ALREADY-EXISTS)
+      (asserts! (>= current-balance amount) ERR-UNAUTHORIZED)
+      (asserts! (>= amount (get min-stake pool)) ERR-UNAUTHORIZED)
+      (map-set reward-balances tx-sender (- current-balance amount))
+      (map-set user-stakes tx-sender {amount: amount, start-height: stacks-block-height, pool-id: pool-id})
+      (map-set pool-stats pool-id {
+        total-staked: (+ (get total-staked pool-stat) amount),
+        total-stakers: (+ (get total-stakers pool-stat) u1)
+      })
+      (var-set total-staked-global (+ (var-get total-staked-global) amount))
+      (ok true)
+    )
+  )
+)
+
+(define-public (unstake-tokens)
+  (let (
+    (stake (unwrap! (map-get? user-stakes tx-sender) ERR-NOT-FOUND))
+    (pool (unwrap! (map-get? staking-pools (get pool-id stake)) ERR-NOT-FOUND))
+    (pool-stat (unwrap! (map-get? pool-stats (get pool-id stake)) ERR-NOT-FOUND))
+    (staked-duration (- stacks-block-height (get start-height stake)))
+    (lock-period (get lock-period pool))
+    (yield-amount (calculate-yield stake))
+    (total-return (+ (get amount stake) yield-amount))
+  )
+    (begin
+      (asserts! (>= staked-duration lock-period) ERR-INVALID-PHASE)
+      (map-delete user-stakes tx-sender)
+      (map-set reward-balances tx-sender (+ (default-to u0 (map-get? reward-balances tx-sender)) total-return))
+      (map-set pool-stats (get pool-id stake) {
+        total-staked: (- (get total-staked pool-stat) (get amount stake)),
+        total-stakers: (- (get total-stakers pool-stat) u1)
+      })
+      (var-set total-staked-global (- (var-get total-staked-global) (get amount stake)))
+      (ok total-return)
+    )
+  )
+)
+
+(define-public (emergency-unstake)
+  (let (
+    (stake (unwrap! (map-get? user-stakes tx-sender) ERR-NOT-FOUND))
+    (pool-stat (unwrap! (map-get? pool-stats (get pool-id stake)) ERR-NOT-FOUND))
+    (penalty-amount (/ (get amount stake) u10))
+    (return-amount (- (get amount stake) penalty-amount))
+  )
+    (begin
+      (map-delete user-stakes tx-sender)
+      (map-set reward-balances tx-sender (+ (default-to u0 (map-get? reward-balances tx-sender)) return-amount))
+      (map-set pool-stats (get pool-id stake) {
+        total-staked: (- (get total-staked pool-stat) (get amount stake)),
+        total-stakers: (- (get total-stakers pool-stat) u1)
+      })
+      (var-set total-staked-global (- (var-get total-staked-global) (get amount stake)))
+      (ok return-amount)
+    )
+  )
+)
+
+(define-private (calculate-yield (stake {amount: uint, start-height: uint, pool-id: uint}))
+  (let (
+    (pool (unwrap-panic (map-get? staking-pools (get pool-id stake))))
+    (staked-duration (- stacks-block-height (get start-height stake)))
+    (yield-per-block (/ (* (get amount stake) (get yield-rate pool)) u10000))
+  )
+    (* yield-per-block staked-duration)
+  )
+)
+
+(define-read-only (get-stake-info (user principal))
+  (match (map-get? user-stakes user)
+    stake (let (
+      (pool (unwrap-panic (map-get? staking-pools (get pool-id stake))))
+      (current-yield (calculate-yield stake))
+    )
+      (some {
+        amount: (get amount stake),
+        start-height: (get start-height stake),
+        pool-id: (get pool-id stake),
+        pool-name: (get name pool),
+        current-yield: current-yield,
+        total-return: (+ (get amount stake) current-yield)
+      })
+    )
+    none
+  )
+)
+
+(define-read-only (get-pool-info (pool-id uint))
+  (match (map-get? staking-pools pool-id)
+    pool (let ((stats (unwrap-panic (map-get? pool-stats pool-id))))
+      (some {
+        name: (get name pool),
+        yield-rate: (get yield-rate pool),
+        min-stake: (get min-stake pool),
+        lock-period: (get lock-period pool),
+        total-staked: (get total-staked stats),
+        total-stakers: (get total-stakers stats)
+      })
+    )
+    none
+  )
+)
+
+(define-read-only (get-staking-overview)
+  {
+    total-staked-global: (var-get total-staked-global),
+    total-pools: (- (var-get next-pool-id) u1),
+    user-stake: (get-stake-info tx-sender)
+  }
 )
 
 (define-read-only (get-contract-info)
