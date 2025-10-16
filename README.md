@@ -11,6 +11,7 @@ A Clarity smart contract implementing a commit-reveal scheme for fair NFT distri
 - 🎯 **Rarity System**: 5 tiers of NFT rarity (Common, Rare, Epic, Legendary, Mythic)
 - 🤝 **Referral & Rewards**: Viral growth mechanics with token rewards for bringing new users
 - 🏦 **Staking & Yield Farming**: Time-locked staking pools with yield generation for reward tokens
+- 🎰 **Provably Fair Lottery**: Decentralized lottery rounds with transparent winner selection
 
 ## 🔄 How It Works
 
@@ -108,6 +109,38 @@ Users mint their NFT with metadata determined by their revealed value.
 (contract-call? .nft-reveal-mechanism get-staking-overview)
 ```
 
+## 🎰 Lottery System
+
+### Start Lottery Rounds (Owner Only)
+```bash
+# Start new lottery: ticket-price, max-tickets, duration (blocks)
+(contract-call? .nft-reveal-mechanism start-lottery u10 u100 u1440)
+```
+
+### Participate & Win
+```bash
+# Buy lottery tickets (up to 20 per transaction)
+(contract-call? .nft-reveal-mechanism buy-lottery-tickets u1 u5)
+
+# Check your tickets
+(contract-call? .nft-reveal-mechanism get-user-lottery-tickets u1 tx-sender)
+
+# Check current lottery status
+(contract-call? .nft-reveal-mechanism get-current-lottery)
+```
+
+### Drawing & Prize Claiming
+```bash
+# Draw winner after lottery ends (Owner only)
+(contract-call? .nft-reveal-mechanism draw-lottery-winner u1 u12345)
+
+# Claim prize if you won
+(contract-call? .nft-reveal-mechanism claim-lottery-prize u1)
+
+# View your lottery statistics
+(contract-call? .nft-reveal-mechanism get-lottery-stats tx-sender)
+```
+
 ## 📊 Contract Functions
 
 ### Public Functions
@@ -123,6 +156,10 @@ Users mint their NFT with metadata determined by their revealed value.
 - `stake-tokens` - Stake reward tokens in a pool for yields
 - `unstake-tokens` - Unstake after lock period with earned yields
 - `emergency-unstake` - Early unstake with 10% penalty
+- `start-lottery` - Launch new lottery round with parameters
+- `buy-lottery-tickets` - Purchase tickets for active lottery
+- `draw-lottery-winner` - Select winner after round ends
+- `claim-lottery-prize` - Winners claim their prize pool
 - `transfer` - Transfer NFT ownership
 - `approve` - Approve spender for token
 - `transfer-from` - Transfer from approved address
@@ -139,6 +176,11 @@ Users mint their NFT with metadata determined by their revealed value.
 - `get-stake-info` - Get user's staking details and current yields
 - `get-pool-info` - Get staking pool details and statistics
 - `get-staking-overview` - Get global staking statistics
+- `get-lottery-round` - Get lottery round details by ID
+- `get-user-lottery-tickets` - Get user's tickets for a round
+- `get-lottery-stats` - Get user's lottery participation statistics
+- `get-current-lottery` - Get active lottery information
+- `get-lottery-overview` - Get global lottery statistics
 
 ## 🎮 Testing
 
@@ -161,6 +203,7 @@ clarinet console
 7. Mint NFT and verify metadata
 8. Claim referral bonuses and transfer rewards
 9. Create staking pools and stake tokens for yields
+10. Start lottery rounds and participate for prize pools
 
 ## 🏗️ Project Structure
 
@@ -202,6 +245,9 @@ Edit `Clarinet.toml` to configure:
 - ✅ Staking pool management
 - ✅ Time-lock enforcement
 - ✅ Emergency unstake penalties
+- ✅ Lottery round lifecycle management
+- ✅ Transparent winner selection
+- ✅ Prize pool distribution
 
 ## 📈 Error Codes
 

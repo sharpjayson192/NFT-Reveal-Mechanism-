@@ -34,6 +34,14 @@
 
 (define-data-var next-pool-id uint u1)
 (define-data-var total-staked-global uint u0)
+(define-data-var current-lottery-id uint u0)
+(define-data-var lottery-treasury uint u0)
+
+(define-map lottery-rounds uint {ticket-price: uint, max-tickets: uint, prize-pool: uint, end-height: uint, status: (string-ascii 16), winner: (optional principal)})
+(define-map lottery-tickets {round-id: uint, ticket-id: uint} principal)
+(define-map user-lottery-tickets {round-id: uint, user: principal} (list 20 uint))
+(define-map lottery-ticket-counts uint uint)
+(define-map lottery-stats principal {total-tickets: uint, total-winnings: uint, rounds-participated: uint})
 
 (define-read-only (get-last-token-id)
   (- (var-get token-id-nonce) u1)
@@ -432,6 +440,146 @@
     total-staked-global: (var-get total-staked-global),
     total-pools: (- (var-get next-pool-id) u1),
     user-stake: (get-stake-info tx-sender)
+  }
+)
+
+(define-public (start-lottery (ticket-price uint) (max-tickets uint) (duration uint))
+  (let ((lottery-id (+ (var-get current-lottery-id) u1)))
+    (begin
+      (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+      (asserts! (> ticket-price u0) ERR-UNAUTHORIZED)
+      (asserts! (> max-tickets u0) ERR-UNAUTHORIZED)
+      (map-set lottery-rounds lottery-id {
+        ticket-price: ticket-price,
+        max-tickets: max-tickets,
+        prize-pool: u0,
+        end-height: (+ stacks-block-height duration),
+        status: "active",
+        winner: none
+      })
+      (map-set lottery-ticket-counts lottery-id u0)
+      (var-set current-lottery-id lottery-id)
+      (ok lottery-id)
+    )
+  )
+)
+
+(define-public (buy-lottery-tickets (round-id uint) (quantity uint))
+  (let (
+    (round (unwrap! (map-get? lottery-rounds round-id) ERR-NOT-FOUND))
+    (current-balance (default-to u0 (map-get? reward-balances tx-sender)))
+    (total-cost (* (get ticket-price round) quantity))
+    (current-ticket-count (default-to u0 (map-get? lottery-ticket-counts round-id)))
+    (user-tickets (default-to (list) (map-get? user-lottery-tickets {round-id: round-id, user: tx-sender})))
+    (user-stats (default-to {total-tickets: u0, total-winnings: u0, rounds-participated: u0} (map-get? lottery-stats tx-sender)))
+  )
+    (begin
+      (asserts! (is-eq (get status round) "active") ERR-INVALID-PHASE)
+      (asserts! (<= stacks-block-height (get end-height round)) ERR-INVALID-PHASE)
+      (asserts! (<= (+ current-ticket-count quantity) (get max-tickets round)) ERR-UNAUTHORIZED)
+      (asserts! (>= current-balance total-cost) ERR-UNAUTHORIZED)
+      (asserts! (<= quantity u20) ERR-UNAUTHORIZED)
+      (map-set reward-balances tx-sender (- current-balance total-cost))
+      (map-set lottery-rounds round-id (merge round {prize-pool: (+ (get prize-pool round) total-cost)}))
+      (map-set lottery-ticket-counts round-id (+ current-ticket-count quantity))
+      (allocate-tickets round-id current-ticket-count quantity)
+      (map-set lottery-stats tx-sender (merge user-stats {
+        total-tickets: (+ (get total-tickets user-stats) quantity),
+        rounds-participated: (if (is-eq (len user-tickets) u0) (+ (get rounds-participated user-stats) u1) (get rounds-participated user-stats))
+      }))
+      (ok true)
+    )
+  )
+)
+
+(define-private (allocate-tickets (round-id uint) (start-ticket uint) (quantity uint))
+  (let ((user-tickets (default-to (list) (map-get? user-lottery-tickets {round-id: round-id, user: tx-sender}))))
+    (begin
+      (map-set lottery-tickets {round-id: round-id, ticket-id: start-ticket} tx-sender)
+      (if (> quantity u1)
+        (begin
+          (map-set lottery-tickets {round-id: round-id, ticket-id: (+ start-ticket u1)} tx-sender)
+          (if (> quantity u2)
+            (begin
+              (map-set lottery-tickets {round-id: round-id, ticket-id: (+ start-ticket u2)} tx-sender)
+              true
+            )
+            true
+          )
+        )
+        true
+      )
+      (map-set user-lottery-tickets {round-id: round-id, user: tx-sender} 
+        (unwrap-panic (as-max-len? (append user-tickets start-ticket) u20)))
+      true
+    )
+  )
+)
+
+(define-public (draw-lottery-winner (round-id uint) (random-seed uint))
+  (let (
+    (round (unwrap! (map-get? lottery-rounds round-id) ERR-NOT-FOUND))
+    (ticket-count (default-to u0 (map-get? lottery-ticket-counts round-id)))
+    (winning-ticket (mod random-seed ticket-count))
+    (winner (unwrap! (map-get? lottery-tickets {round-id: round-id, ticket-id: winning-ticket}) ERR-NOT-FOUND))
+  )
+    (begin
+      (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+      (asserts! (is-eq (get status round) "active") ERR-INVALID-PHASE)
+      (asserts! (> stacks-block-height (get end-height round)) ERR-INVALID-PHASE)
+      (asserts! (> ticket-count u0) ERR-NOT-FOUND)
+      (map-set lottery-rounds round-id (merge round {status: "drawn", winner: (some winner)}))
+      (ok winner)
+    )
+  )
+)
+
+(define-public (claim-lottery-prize (round-id uint))
+  (let (
+    (round (unwrap! (map-get? lottery-rounds round-id) ERR-NOT-FOUND))
+    (winner (unwrap! (get winner round) ERR-NOT-FOUND))
+    (user-stats (default-to {total-tickets: u0, total-winnings: u0, rounds-participated: u0} (map-get? lottery-stats tx-sender)))
+  )
+    (begin
+      (asserts! (is-eq tx-sender winner) ERR-UNAUTHORIZED)
+      (asserts! (is-eq (get status round) "drawn") ERR-INVALID-PHASE)
+      (map-set reward-balances tx-sender (+ (default-to u0 (map-get? reward-balances tx-sender)) (get prize-pool round)))
+      (map-set lottery-rounds round-id (merge round {status: "claimed"}))
+      (map-set lottery-stats tx-sender (merge user-stats {
+        total-winnings: (+ (get total-winnings user-stats) (get prize-pool round))
+      }))
+      (ok (get prize-pool round))
+    )
+  )
+)
+
+(define-read-only (get-lottery-round (round-id uint))
+  (map-get? lottery-rounds round-id)
+)
+
+(define-read-only (get-user-lottery-tickets (round-id uint) (user principal))
+  (map-get? user-lottery-tickets {round-id: round-id, user: user})
+)
+
+(define-read-only (get-lottery-stats (user principal))
+  (default-to {total-tickets: u0, total-winnings: u0, rounds-participated: u0} (map-get? lottery-stats user))
+)
+
+(define-read-only (get-current-lottery)
+  (let ((current-id (var-get current-lottery-id)))
+    (if (> current-id u0)
+      (map-get? lottery-rounds current-id)
+      none
+    )
+  )
+)
+
+(define-read-only (get-lottery-overview)
+  {
+    current-lottery-id: (var-get current-lottery-id),
+    lottery-treasury: (var-get lottery-treasury),
+    current-lottery: (get-current-lottery),
+    user-stats: (get-lottery-stats tx-sender)
   }
 )
 
