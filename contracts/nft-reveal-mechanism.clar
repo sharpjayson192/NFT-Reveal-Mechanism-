@@ -10,8 +10,10 @@
 (define-constant ERR-ALREADY-MINTED (err u108))
 (define-constant ERR-INVALID-TOKEN (err u109))
 (define-constant ERR-UNAUTHORIZED (err u110))
+(define-constant ERR-PAUSED (err u111))
 
 (define-data-var token-id-nonce uint u1)
+(define-data-var paused bool false)
 (define-data-var commit-phase-start uint u0)
 (define-data-var commit-phase-end uint u0)
 (define-data-var reveal-phase-end uint u0)
@@ -70,6 +72,10 @@
   )
 )
 
+(define-read-only (is-paused)
+  (var-get paused)
+)
+
 (define-read-only (get-user-commitment (user principal))
   (map-get? user-commits user)
 )
@@ -108,9 +114,18 @@
   )
 )
 
+(define-public (set-paused (new-paused bool))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set paused new-paused)
+    (ok true)
+  )
+)
+
 (define-public (commit (commitment (buff 32)))
   (let ((current-phase (get-current-phase)))
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (is-eq current-phase "commit") ERR-INVALID-PHASE)
       (asserts! (is-none (map-get? user-commits tx-sender)) ERR-ALREADY-COMMITTED)
       (map-set user-commits tx-sender commitment)
@@ -122,6 +137,7 @@
 (define-public (commit-with-referral (commitment (buff 32)) (referrer principal))
   (let ((current-phase (get-current-phase)))
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (is-eq current-phase "commit") ERR-INVALID-PHASE)
       (asserts! (is-none (map-get? user-commits tx-sender)) ERR-ALREADY-COMMITTED)
       (asserts! (not (is-eq tx-sender referrer)) ERR-UNAUTHORIZED)
@@ -143,6 +159,7 @@
     (expected-hash (sha256 (concat value-buff nonce-buff)))
   )
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (is-eq current-phase "reveal") ERR-INVALID-PHASE)
       (asserts! (is-some commitment) ERR-NOT-COMMITTED)
       (asserts! (is-none (map-get? user-reveals tx-sender)) ERR-ALREADY-REVEALED)
@@ -161,6 +178,7 @@
     (referrer (map-get? user-referrals tx-sender))
   )
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (is-eq current-phase "mint") ERR-INVALID-PHASE)
       (asserts! (is-some reveal-data) ERR-NOT-COMMITTED)
       (asserts! (is-none (map-get? user-tokens tx-sender)) ERR-ALREADY-MINTED)
@@ -195,6 +213,7 @@
 (define-public (transfer (token-id uint) (sender principal) (recipient principal))
   (let ((owner (unwrap! (map-get? nft-owners token-id) ERR-NOT-FOUND)))
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (or (is-eq tx-sender sender) (is-eq tx-sender owner)) ERR-UNAUTHORIZED)
       (asserts! (is-eq owner sender) ERR-UNAUTHORIZED)
       (map-set nft-owners token-id recipient)
@@ -206,6 +225,7 @@
 (define-public (approve (token-id uint) (spender principal))
   (let ((owner (unwrap! (map-get? nft-owners token-id) ERR-NOT-FOUND)))
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (is-eq tx-sender owner) ERR-UNAUTHORIZED)
       (map-set token-approvals {token-id: token-id, spender: spender} true)
       (ok true)
@@ -219,6 +239,7 @@
     (approved (default-to false (map-get? token-approvals {token-id: token-id, spender: tx-sender})))
   )
     (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
       (asserts! (or (is-eq tx-sender owner) approved) ERR-UNAUTHORIZED)
       (asserts! (is-eq owner sender) ERR-UNAUTHORIZED)
       (map-delete token-approvals {token-id: token-id, spender: tx-sender})
