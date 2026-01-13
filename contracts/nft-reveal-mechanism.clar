@@ -38,12 +38,15 @@
 (define-data-var total-staked-global uint u0)
 (define-data-var current-lottery-id uint u0)
 (define-data-var lottery-treasury uint u0)
+(define-data-var marketplace-fee-bps uint u250)
+(define-data-var marketplace-treasury uint u0)
 
 (define-map lottery-rounds uint {ticket-price: uint, max-tickets: uint, prize-pool: uint, end-height: uint, status: (string-ascii 16), winner: (optional principal)})
 (define-map lottery-tickets {round-id: uint, ticket-id: uint} principal)
 (define-map user-lottery-tickets {round-id: uint, user: principal} (list 20 uint))
 (define-map lottery-ticket-counts uint uint)
 (define-map lottery-stats principal {total-tickets: uint, total-winnings: uint, rounds-participated: uint})
+(define-map market-listings uint {seller: principal, price: uint})
 
 (define-read-only (get-last-token-id)
   (- (var-get token-id-nonce) u1)
@@ -247,6 +250,80 @@
       (ok true)
     )
   )
+)
+
+(define-public (list-token (token-id uint) (price uint))
+  (let (
+    (owner (unwrap! (map-get? nft-owners token-id) ERR-NOT-FOUND))
+    (existing (map-get? market-listings token-id))
+  )
+    (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
+      (asserts! (is-eq tx-sender owner) ERR-UNAUTHORIZED)
+      (asserts! (> price u0) ERR-UNAUTHORIZED)
+      (asserts! (is-none existing) ERR-ALREADY-EXISTS)
+      (map-set market-listings token-id {seller: tx-sender, price: price})
+      (ok true)
+    )
+  )
+)
+
+(define-public (cancel-listing (token-id uint))
+  (let (
+    (listing (unwrap! (map-get? market-listings token-id) ERR-NOT-FOUND))
+  )
+    (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
+      (asserts! (is-eq tx-sender (get seller listing)) ERR-UNAUTHORIZED)
+      (map-delete market-listings token-id)
+      (ok true)
+    )
+  )
+)
+
+(define-public (buy-token (token-id uint))
+  (let (
+    (listing (unwrap! (map-get? market-listings token-id) ERR-NOT-FOUND))
+    (owner (unwrap! (map-get? nft-owners token-id) ERR-NOT-FOUND))
+    (price (get price listing))
+    (fee-bps (var-get marketplace-fee-bps))
+    (fee (/ (* price fee-bps) u10000))
+    (payout (- price fee))
+    (buyer-balance (default-to u0 (map-get? reward-balances tx-sender)))
+  )
+    (begin
+      (asserts! (not (var-get paused)) ERR-PAUSED)
+      (asserts! (is-eq owner (get seller listing)) ERR-UNAUTHORIZED)
+      (asserts! (not (is-eq tx-sender owner)) ERR-UNAUTHORIZED)
+      (asserts! (>= buyer-balance price) ERR-UNAUTHORIZED)
+      (map-set reward-balances tx-sender (- buyer-balance price))
+      (map-set reward-balances owner (+ (default-to u0 (map-get? reward-balances owner)) payout))
+      (var-set marketplace-treasury (+ (var-get marketplace-treasury) fee))
+      (map-set nft-owners token-id tx-sender)
+      (map-delete market-listings token-id)
+      (ok true)
+    )
+  )
+)
+
+(define-public (set-marketplace-fee-bps (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (< new-fee u10000) ERR-UNAUTHORIZED)
+    (var-set marketplace-fee-bps new-fee)
+    (ok true)
+  )
+)
+
+(define-read-only (get-listing (token-id uint))
+  (map-get? market-listings token-id)
+)
+
+(define-read-only (get-market-config)
+  {
+    fee-bps: (var-get marketplace-fee-bps),
+    treasury: (var-get marketplace-treasury)
+  }
 )
 
 (define-public (set-contract-uri (new-uri (string-ascii 256)))
